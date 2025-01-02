@@ -15,6 +15,7 @@
 #include "mail-storage-hooks.h"
 #include "module-context.h"
 #include "fts-api-private.h"
+#include "master-service.h"
 
 #if defined(__FreeBSD__) || defined(__NetBSD__) || defined(__APPLE__)
 #include <sys/types.h>
@@ -23,16 +24,19 @@
 
 #include <sqlite3.h>
 
-#define XAPIAN_MIN_RAM 250L // MB
+#define XAPIAN_SLEEP std::chrono::milliseconds(200)
+
 #define XAPIAN_DEFAULT_PARTIAL 3L
-#define XAPIAN_DEFAULT_FULL 20L
 
-#define XAPIAN_FILE_PREFIX "xapian-indexes"
-#define XAPIAN_TERM_SIZELIMIT 245L
-#define XAPIAN_MAXTERMS_PERDOC 50000L
-#define XAPIAN_THREAD_SIZE 3L
-#define XAPIAN_WRITING_CACHE 2000L
+// Ressources limits
+#define XAPIAN_FILE_PREFIX "xapian-indexes" // Locations of indexes
+#define XAPIAN_TERM_SIZELIMIT 245L // Hard limit of Xapian library
+#define XAPIAN_MAXTERMS_PERDOC 50000L // Nb of keywords max per email
+#define XAPIAN_WRITING_CACHE 4000L // Max nb of emails processed in cache 
+#define XAPIAN_MIN_RAM 500L // MB
+#define XAPIAN_MAX_ERRORS 1024L 
 
+// Word processing
 #define XAPIAN_WILDCARD "wldcrd"
 #define XAPIAN_EXPUNGE_HEADER 9
 
@@ -41,24 +45,34 @@
 #define HDRS_NB 12
 static const char * hdrs_emails[HDRS_NB] = { "uid", "subject", "from", "to",  "cc",  "bcc",  "messageid", "listid", "body", "contenttype", "xautobcc", ""  };
 static const char * hdrs_xapian[HDRS_NB] = { "Q",   "S",       "A",    "XTO", "XCC", "XBCC", "XMID",      "XLIST",  "XBDY", "XCT", "XABCC", "XBDY" };
-static const char * createTable = "CREATE TABLE IF NOT EXISTS docs(ID INT PRIMARY KEY NOT NULL);";
-static const char * selectUIDs = "select ID from docs;";
+
+static const char * createExpTable = "CREATE TABLE IF NOT EXISTS expunges(ID INTEGER PRIMARY KEY NOT NULL);";
+static const char * selectExpUIDs = "select ID from expunges;";
+static const char * replaceExpUID = "replace into expunges values (%d);";
+static const char * deleteExpUID = "delete from expunges where ID=%d;";
+static const char * suffixExp = "_exp.db";
+
+static const char * createDictTable = "CREATE TABLE IF NOT EXISTS dict (keyword TEXT, len INTEGER ); CREATE UNIQUE INDEX IF NOT EXISTS dict_idx ON dict (keyword COLLATE NOCASE); CREATE INDEX IF NOT EXISTS dict_len ON dict (len);";
+static const char * replaceDictWord ="REPLACE INTO dict VALUES('";
+static const char * searchDict1 = "SELECT keyword FROM dict WHERE (keyword like '%";
+static const char * searchDict2 = "%') ORDER BY len LIMIT 100";
+static const char * suffixDict = "_dict.db";
+
 #define CHAR_KEY "_"
 #define CHAR_SPACE " "
 
-#define CHARS_PB 14
-static const char * chars_pb[] = { "<", ">", ".", "-", "@", "&", "%", "*", "|", "`", "#", "~", "^", "\\" };
+#define CHARS_PB 16
+static const char * chars_pb[] = { "<", ">", ".", "-", "@", "&", "%", "*", "|", "`", "#", "^", "\\", "'", "/", "~" };
 
-#define CHARS_SEP 12
-static const char * chars_sep[] = { "'", "\"", "\r", "\n", "\t", ",", ":", ";", "(", ")", "?", "!" };
+#define CHARS_SEP 16
+static const char * chars_sep[] = { "\"", "\r", "\n", "\t", ",", ":", ";", "(", ")", "?", "!", "¿", "¡", "\u00A0", "‘", "“" };
 
 
 struct fts_xapian_settings
 {
 	long verbose;
 	long lowmemory;
-	long partial,full;
-	bool detach;
+	long partial;
 };
 
 struct fts_xapian_user {

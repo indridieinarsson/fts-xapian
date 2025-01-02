@@ -6,8 +6,9 @@ What is this?
 
 This project intends to provide a straightforward, simple and maintenance free, way to configure FTS plugin for [Dovecot](https://github.com/dovecot/), leveraging the efforts by the [Xapian.org](https://xapian.org/) team.
 
-This effort came after Dovecot team decided to deprecate "fts_squat" included in the dovecot core, and due to the complexity of the Solr plugin capabilitles, un-needed for most users.
+This effort came after Dovecot team decided to deprecate "fts_squat" included in the dovecot core, and due to the complexity of the Solr plugin capabilitles, unneeded for most users.
 
+If you feel donating, kindly use Paypal : moreaujoan@gmail.com
 
 
 Debugging/Support
@@ -39,7 +40,7 @@ mail_plugins = (...) fts fts_xapian
 
 plugin {
     fts = xapian
-    fts_xapian = partial=3 full=20
+    fts_xapian = partial=3 
 
     fts_autoindex = yes
     fts_enforced = yes
@@ -54,6 +55,7 @@ service indexer-worker {
     # Increase vsz_limit to 2GB or above.
     # Or 0 if you have rather large memory usable on your server, which is preferred for performance)
     vsz_limit = 2G
+    # This one must be 0
     process_limit = 0
 }
 
@@ -66,33 +68,23 @@ service decode2text {
 }
 ```
 
+Make sure also that dovecot is started with enough files opening capacity (ideally set 'LimitNOFILE=65535' in the systemd start file).
+
 
 Configuration - Indexing options
 --------------------------------
 
 | Option         | Optional | Description                     | Possible values                                     | Default value |
 |----------------|----------|---------------------------------|-----------------------------------------------------|---------------|
-| partial & full |   no     | NGram values for header fields  | between 3 and 20 characters                         | 3 & 20        |
+| partial        |   no     | Minimum size of search keyword  | 2 or above                                          | 3             |
 | verbose        |   yes    | Logs verbosity                  | 0 (silent), 1 (verbose) or 2 (debug)                | 0             |
 | lowmemory      |   yes    | Memory limit before disk commit | 0 (default, meaning 250MB), or set value (in MB)    | 0             |
-| detach         |   yes    | Allow Xapian closing to be detached from main process | 0 (no), 1 (yes)               | 0             |
-
-Set detach=1 only if your mail storage in on a partition on which you can force the uid/gid. For some reasons, Devoct write as root instead so the filesystem must correct until dovecot team fixes the bug. detach=1 speeds up very much the process. 
-
-
-Configuration - NGrams details
-------------------------------
-
-The partial & full parameters are the NGram values for header fields, which means the keywords created for fields (To,
-Cc, ...) are between 3 and 20 chars long. Full words are also added by default (if not longer than 245 chars, which is
-the limit of Xapian capability).
-
-Example: "<john@doe>" will create joh, ohn, hn@, ..., john@d, ohn@do, ..., and finally john@doe as searchable keywords.
-
 
 
 Configuration - Index updating
 ------------------------------
+
+Please make sure that "ulimit" is high enough. Typically, set "DefaultLimitNOFILE=16384:524288"  in /etc/systemd/system.conf
 
 Just restart Dovecot:
 
@@ -110,7 +102,7 @@ doveadm index -A -q \*
 - With argument `-q`, doveadm queues the indexing to be run by indexer process.
   Remove `-q` if you want to index immediately.
 
-You shall put in a cron the following command (for daily run for instance) :
+You shall put in a cron the following command (daily for instance) to cleanup indexes :
 
 ```sh
 doveadm fts optimize -A
@@ -175,6 +167,8 @@ autoreconf -vi
 make
 sudo make install
 ```
+
+Note: if your system is quite old, you may change gnu++20 by gnu++11 in src/Makefile.in
 
 Replace /path/to/dovecot by the actual path to 'dovecot-config'.
 Type 'locate dovecot-config' in a shell to figure this out. On ArchLinux , it is /usr/lib/dovecot.
